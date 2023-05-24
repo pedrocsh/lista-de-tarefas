@@ -1,34 +1,53 @@
+import 'dotenv/config'
 import express from 'express'
-import crypto from 'crypto'
+import { Collection, Db, MongoClient, ObjectId } from 'mongodb'
 
 const app = express()
 const PORT = process.env.PORT || 3000
+const MONGO_CONNECTION = process.env.MONGO_CONNECTION
+const MONGO_DB_NAME = process.env.MONGO_DB_NAME
 
 app.use(express.json())
 
-type Task = {
-  id: string
-  todo: string
-  isCompleted: boolean
-  created_at: Date
+const collections: { tasks?: Collection } = {}
+
+async function connectoToMongo() {
+  if (!MONGO_CONNECTION || !MONGO_DB_NAME) {
+    throw new Error('Environment variables is missing')
+  }
+
+  try {
+    const client: MongoClient = new MongoClient(MONGO_CONNECTION)
+
+    await client.connect()
+
+    console.log('💾 Connected to MongoDB')
+
+    const db: Db = client.db(MONGO_DB_NAME)
+    const tasksCollection: Collection = db.collection('tasks')
+
+    collections.tasks = tasksCollection
+  } catch (error) {
+    throw new Error('Failed to connect to mongodb')
+  }
 }
 
-const tasks: Task[] = []
+connectoToMongo()
 
-app.get('/tasks', (_, response) => {
+app.get('/tasks', async (_, response) => {
+  const tasks = await collections.tasks?.find({}).toArray()
   return response.json({
     tasks,
   })
 })
 
-app.post('/tasks', (request, response) => {
+app.post('/tasks', async (request, response) => {
   const { todo } = request.body
 
-  tasks.push({
-    id: crypto.randomBytes(16).toString('hex'),
+  await collections.tasks?.insertOne({
     todo,
-    created_at: new Date(),
     isCompleted: false,
+    created_at: new Date(),
   })
 
   return response.status(201).json({
@@ -36,27 +55,27 @@ app.post('/tasks', (request, response) => {
   })
 })
 
-app.patch('/tasks/:id', (request, response) => {
+app.patch('/tasks/:id', async (request, response) => {
   const { id } = request.params
   const { isCompleted } = request.body
+  const query = { _id: new ObjectId(id) }
 
-  const indice = tasks.findIndex(task => task.id === id)
-
-  if (indice !== -1) {
-    tasks[indice].isCompleted = isCompleted
-  }
+  await collections.tasks?.updateOne(query, {
+    $set: {
+      isCompleted,
+    },
+  })
 
   return response.json({
-    task: tasks[indice],
+    message: `${id} successfully updated`,
   })
 })
 
-app.delete('/tasks/:id', (request, response) => {
+app.delete('/tasks/:id', async (request, response) => {
   const { id } = request.params
+  const query = { _id: new ObjectId(id) }
 
-  const indice = tasks.findIndex(task => task.id === id)
-
-  tasks.splice(indice, 1)
+  await collections.tasks?.deleteOne(query)
 
   return response.json({
     message: `${id} removed from tasks.`,
